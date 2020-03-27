@@ -4,21 +4,21 @@ import numpy as np
 from tensorflow.keras import layers, models
 class Meta:
     def __init__(self, value):
-        self.category = set()
+        self.categories = set()
         self.type = type(value)
         if isinstance(value, list):
             self.min = min(value)
             self.max = max(value)
-            self.category.update(value)
+            self.categories.update(value)
         elif self.type == dict:
             self.min = min(value.keys())
             self.max = max(value.keys())
-            self.category.update(value.keys())
+            self.categories.update(value.keys())
         else:
             self.min = value
             self.max = value
             if self.type in [int, str]:
-                self.category.add(value)
+                self.categories.add(value)
 
     def Update(self, value):
         value_type = type(value)
@@ -36,10 +36,10 @@ class Meta:
             if self.max < value:
                 self.max = value
             if self.type in [int, str]:
-                self.category.add(value)
+                self.categories.add(value)
     def Export(self):
         self.type = self.type.__name__
-        self.category = sorted(self.category)
+        self.categories = sorted(self.categories)
         return self.__dict__
 
 def read_feature(filenames):
@@ -98,51 +98,68 @@ def make_tfrecord(in_files=['train.tsv'], out_file='train.tfrecord', out_meta='t
     with open(out_meta, 'w') as f:
         json.dump({key:value.Export() for key, value in metadata.items()}, f, indent=2)
 
+def make_columns(meta_file = 'train.meta'):
+    with open(meta_file, 'r') as f:
+        metadata = json.load(f)
+    columns = []
+    for key, meta in metadata.items():
+        if meta['type'] == 'float':
+            column = tf.feature_column.numeric_column(key, dtype=tf.float32, default_value=0)
+        elif meta['type'] == 'str':
+            column = tf.feature_column.indicator_column(
+                tf.feature_column.categorical_column_with_vocabulary_list(
+                    key, meta['categories']
+                )
+            )
+        elif meta['type'] == 'list':
+            column = tf.feature_column.indicator_column(
+                tf.feature_column.categorical_column_with_vocabulary_list(
+                    key, meta['categories']
+                )
+            )
+            """
+            elif meta['type'] == 'int':
+                column = tf.feature_column.indicator_column(
+                    tf.feature_column.categorical_column_with_vocabulary_list(
+                        key, meta['categories']
+                    )
+                )
+            """
+        else:
+            continue
+        if True: #key in ['gender', 'gender_prob', 'age', 'subscribe_channel_list']: #'gender', 'gender_prob', 
+            columns.append(column)
+    return columns
 
-make_tfrecord()
-
-raw_dataset = tf.data.TFRecordDataset(['train.tfrecord'])
 feature_description = {
-    'gender': tf.io.FixedLenFeature([], tf.string, default_value='unknown'),
+    'gender': tf.io.FixedLenFeature([], tf.string), #, default_value='unknown'
     'gender_prob': tf.io.FixedLenFeature([], tf.float32, default_value=0),
     'age': tf.io.FixedLenFeature([], tf.int64, default_value=0),
-    'age_seg_18_24': tf.io.FixedLenFeature([], tf.float32, default_value=0),
-    'city_code': tf.io.FixedLenFeature([], tf.string, default_value='unknown'),
-    'prefecture_id': tf.io.FixedLenFeature([], tf.int64, default_value=0),
-    'device_type': tf.io.FixedLenFeature([], tf.string, default_value='unknown'),
+    #'age_seg_18_24': tf.io.FixedLenFeature([], tf.float32, default_value=0),
+    #'city_code': tf.io.FixedLenFeature([], tf.string, default_value='unknown'),
+    #'prefecture_id': tf.io.FixedLenFeature([], tf.int64, default_value=0),
+    #'device_type': tf.io.FixedLenFeature([], tf.string, default_value='unknown'),
+    #'subscribe_channel_list': tf.io.FixedLenFeature([], tf.string, default_value='unknown')
+    'subscribe_channel_list': tf.io.VarLenFeature(tf.string)
 }
 
-def make_columns():
-    age = tf.feature_column.numeric_column('age', dtype=tf.int64, default_value=0)
-    gender = tf.feature_column.indicator_column(
-        tf.feature_column.categorical_column_with_vocabulary_list(
-            'gender', ['male', 'female'], 
-        )
-    )
-    return [age, gender]
-columns = make_columns()
-spec = tf.feature_column.make_parse_example_spec(columns)
-print (repr(spec))
-def _parse_function_with_column(example_proto):
-    return tf.io.parse_single_example(example_proto, spec)
-"""
-#dense_tensor = input_layer(features, columns)
-feature_layer = tf.keras.layers.DenseFeatures(columns)
-print (feature_layer(data).numpy())
-"""
-def _parse_function(example_proto):
-    return tf.io.parse_single_example(example_proto, feature_description)
+if __name__ == '__main__':
+    make_tfrecord()
+    columns = make_columns()
+    spec = tf.feature_column.make_parse_example_spec(columns)
+    print (repr(spec))
+    def _parse_function_with_column(example_proto):
+        return tf.io.parse_single_example(example_proto, spec) # parse_single_example
+    def _parse_function_with_desc(example_proto):
+        parsed = tf.io.parse_single_example(example_proto, feature_description)
+        return parsed
 
-def test1():
-    parsed_dataset = raw_dataset.map(_parse_function)
-    #parsed_dataset
-    for parsed_record in parsed_dataset.take(10):
-        print (repr(parsed_record))
+    raw_dataset = tf.data.TFRecordDataset(['train.tfrecord'])
 
-
-parsed_dataset = raw_dataset.map(_parse_function_with_column)
-for parsed_record in parsed_dataset.take(10):
-    print (repr(parsed_record))
-    dense = layers.DenseFeatures(columns)
-    feature_dense = dense(parsed_record).numpy()
-    print (feature_dense)
+    parsed_dataset = raw_dataset.map(_parse_function_with_column)
+    batch_dataset = parsed_dataset.batch(10)
+    for batch in batch_dataset.take(1):
+        print (repr(batch))
+        dense = layers.DenseFeatures(columns)
+        feature_dense = dense(batch).numpy()
+        print (feature_dense)
