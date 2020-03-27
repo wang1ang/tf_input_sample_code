@@ -3,29 +3,44 @@ import json
 import numpy as np
 from tensorflow.keras import layers, models
 class Meta:
-    def __init__(self, sample_value):
+    def __init__(self, value):
         self.category = set()
-        self.type = type(sample_value)
-        self.min = sample_value
-        self.max = sample_value
-        if self.type in [int, str]:
-            self.category.add(sample_value)
+        self.type = type(value)
+        if isinstance(value, list):
+            self.min = min(value)
+            self.max = max(value)
+            self.category.update(value)
+        elif self.type == dict:
+            self.min = min(value.keys())
+            self.max = max(value.keys())
+            self.category.update(value.keys())
+        else:
+            self.min = value
+            self.max = value
+            if self.type in [int, str]:
+                self.category.add(value)
 
     def Update(self, value):
-        if value is None:
-            return
         value_type = type(value)
-        if self.type is None:
-            self.type = value_type
         if self.type == int and value_type == float:
             self.type = float
-        if self.min > value:
-            self.min = value 
-        if self.max < value:
-            self.max = value
-        if self.type in [int, str]:
-            self.category.add(value)
-
+        if isinstance(value, list):
+            self.min = min(value + [self.min])
+            self.max = max(value + [self.max])
+        elif self.type == dict:
+            self.min = min(list(value.keys()) + [self.min])
+            self.max = max(list(value.keys()) + [self.max])
+        else:
+            if self.min > value:
+                self.min = value 
+            if self.max < value:
+                self.max = value
+            if self.type in [int, str]:
+                self.category.add(value)
+    def Export(self):
+        self.type = self.type.__name__
+        self.category = sorted(self.category)
+        return self.__dict__
 
 def read_feature(filenames):
     for filename in filenames:
@@ -52,22 +67,24 @@ def make_tfrecord(in_files=['train.tsv'], out_file='train.tfrecord', out_meta='t
                     continue
                 # append key value
                 value_type = type(value)
+                if value_type in [list, dict] and len(value) == 0:
+                    continue
                 if value_type == int:
                     tf_features[key] = _int64_feature([value])
-                if value_type == float:
+                elif value_type == float:
                     tf_features[key] = _float_feature([value])
-                if value_type == str:
+                elif value_type == str:
                     tf_features[key] = _bytes_feature([value.encode()])
 
                 # append list:
-                if value_type == list:
+                elif isinstance(value, list):
                     if type(value[0]) == int:
                         tf_features[key] = _int64_feature(value)
                     if type(value[0]) == str:
                         tf_features[key] = _bytes_feature([s.encode() for s in value])
-                if value_type == dict:
+                elif value_type == dict:
                     tf_features[key+'_keys'] = _bytes_feature([s.encode() for s in value.keys()])
-                    tf_features[key+'_values'] = _float_feature(value.values())
+                    tf_features[key+'_values'] = _float_feature([float(v) for v in value.values()])
 
                 # update metadata
                 if key not in metadata:
@@ -79,7 +96,7 @@ def make_tfrecord(in_files=['train.tsv'], out_file='train.tfrecord', out_meta='t
             serialized_example = example_proto.SerializeToString() # tf.train.Example.FromString(serialized_example)
             writer.write(serialized_example)
     with open(out_meta, 'w') as f:
-        json.dump(metadata, f)
+        json.dump({key:value.Export() for key, value in metadata.items()}, f, indent=2)
 
 
 make_tfrecord()
