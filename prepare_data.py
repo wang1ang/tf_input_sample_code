@@ -102,7 +102,8 @@ def make_columns(meta_file = 'train.meta'):
     with open(meta_file, 'r') as f:
         metadata = json.load(f)
     columns = []
-    for key, meta in metadata.items():
+    for key in sorted(metadata.keys()):
+        meta = metadata[key]
         if meta['type'] == 'float':
             column = tf.feature_column.numeric_column(key, dtype=tf.float32, default_value=0)
         elif meta['type'] == 'str':
@@ -111,24 +112,20 @@ def make_columns(meta_file = 'train.meta'):
                     key, meta['categories']
                 )
             )
-        elif meta['type'] == 'list':
+        elif meta['type'] in ['int', 'list']:
             column = tf.feature_column.indicator_column(
                 tf.feature_column.categorical_column_with_vocabulary_list(
                     key, meta['categories']
                 )
             )
-            """
-            elif meta['type'] == 'int':
-                column = tf.feature_column.indicator_column(
-                    tf.feature_column.categorical_column_with_vocabulary_list(
-                        key, meta['categories']
-                    )
-                )
-            """
+        elif meta['type'] == 'dict':
+            categorical_column = tf.feature_column.categorical_column_with_vocabulary_list(key+'_keys', meta['categories'])
+            weighted_column = tf.feature_column.weighted_categorical_column(categorical_column, key+'_values')
+            column = tf.feature_column.indicator_column(weighted_column)
         else:
             continue
-        if True: #key in ['gender', 'gender_prob', 'age', 'subscribe_channel_list']: #'gender', 'gender_prob', 
-            columns.append(column)
+        #if key in ['access_hour_map', 'read1m_hours_map', 'read1m_channels_map']: #True: #key in ['gender', 'gender_prob', 'age', 'subscribe_channel_list']: #'gender', 'gender_prob', 
+        columns.append(column)
     return columns
 
 feature_description = {
@@ -144,7 +141,7 @@ feature_description = {
 }
 
 if __name__ == '__main__':
-    make_tfrecord()
+    #make_tfrecord()
     columns = make_columns()
     spec = tf.feature_column.make_parse_example_spec(columns)
     print (repr(spec))
@@ -162,4 +159,6 @@ if __name__ == '__main__':
         print (repr(batch))
         dense = layers.DenseFeatures(columns)
         feature_dense = dense(batch).numpy()
+        print (feature_dense.shape)
         print (feature_dense)
+    print (sorted(c.name for c in columns))
